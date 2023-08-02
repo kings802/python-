@@ -1,0 +1,45 @@
+import pandas as pd
+
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+
+# 读取 CSV 文件
+data = pd.read_csv('Gesture_train/train_data.csv')
+
+# 分离特征值 (X) 和类别 (y)
+x_train = data[['angle_1', 'angle_2', 'angle_3', 'angle_4', 'angle_5']]
+y_train = data['ges']
+
+# 读取测试集数据
+test_data = pd.read_csv('Gesture_predict/predict_data.csv')
+
+# 分离特征值 (X_test) 和类别 (y_test)
+x_test = test_data[['angle_1', 'angle_2', 'angle_3', 'angle_4', 'angle_5']]
+y_test = test_data['ges']
+id_test = test_data['id']
+
+# 创建多个分类器
+svm_model = SVC(kernel='linear')
+rf_model = RandomForestClassifier()
+knn_model = KNeighborsClassifier()
+lr_model = LogisticRegression(max_iter=1000)
+ada_model = AdaBoostClassifier()
+
+# 定义模型列表和模型名称列表
+models = [svm_model, rf_model, knn_model, lr_model, ada_model]
+model_names = ['SVM', 'Random Forest', 'K-Nearest Neighbors', 'Logistic Regression', 'AdaBoost']
+
+
+
+# print(x_test)
+
+
+for i, model in enumerate(models):
+    model.fit(x_train, y_train)
+    y_pred = model.predict(x_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    error_num = (y_test != y_pred).sum()
+    print("模型 {}: 准确率 - {:.2f}%，错误个数 - {}".format(model_names[i], accuracy*100, error_num))
