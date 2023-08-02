@@ -1,5 +1,10 @@
 使用 OpenCV 和 MediaPipe 进行剪刀、石头、布手势的识别
 
+
+https://github.com/kings802/python-finger_gesture/assets/19601216/0bc9887c-bf59-40af-bef9-a0b1ca62012e
+
+
+
 MediaPipe是一个用于构建机器学习管道的框架，用于处理视频、音频等时间序列数据。这个跨平台框架适用于桌面/服务器、Android、iOS和嵌入式设备，如Raspberry Pi和Jetson Nano。
 MediaPipe具有强大的功能，主要包括如下：
 ![1690947782434](https://github.com/kings802/python-finger_gesture/assets/19601216/45e58b80-2bee-484e-a661-81ffb72a5ea3)
@@ -24,3 +29,7 @@ MediaPipe具有强大的功能，主要包括如下：
 按t开始训练模型 
 按p开始识别手势 
 按esc退出程序 
+
+代码文件：
+gesture_main_zh.py：主代码程序
+train_multi.py：多种机器学习分类算法的训练测试过程
