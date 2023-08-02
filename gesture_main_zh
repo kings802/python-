@@ -1,0 +1,330 @@
+'''
+Mediapipe实际上是一个集成的机器学习视觉算法的工具库，包含了人脸检测、人脸关键点、手势识别、头像分割和姿态识别等各种模型。
+mp.solutions.drawing_utils是一个绘图模块，将识别到的手部关键点信息绘制道cv2图像中，mp.solutions.drawing_style定义了绘制的风格。
+mp.solutions.hands是mediapipe中的手部识别模块，可以通过它调用手部识别的api，然后通过调用mp_hands.Hands初始化手部识别类。
+mp_hands.Hands中的参数：
+1)static_image_mode=True适用于静态图片的手势识别，Flase适用于视频等动态识别，比较明显的区别是，若识别的手的数量超过了最大值，True时识别的手会在多个手之间不停闪烁，而False时，超出的手不会识别，系统会自动跟踪之前已经识别过的手。默认值为False;
+2)max_num_hands用于指定识别手的最大数量。默认值为2;
+3)min_detection_confidence 表示最小检测信度，取值为[0.0,1.0]这个值约小越容易识别出手，用时越短，但是识别的准确度就越差。越大识别的越精准，但是响应的时间也会增加。默认值为0.5;
+4)min_tracking_confience 表示最小的追踪可信度，越大手部追踪的越准确，相应的响应时间也就越长。默认值为0.5。
+'''
+
+import cv2
+import mediapipe as mp
+import math
+import os
+import numpy as np
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+import time
+import random
+import csv
+from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+from sklearn.metrics import accuracy_score
+from PIL import ImageFont, ImageDraw, Image
+
+
+class Gesture():
+
+  def __init__(self, train_path, predict_path, gesture, train_model):
+    self.blurValue = 5
+    self.bgSubThreshold = 36
+    self.train_path = train_path
+    self.predict_path = predict_path
+    self.threshold = 60
+    self.gesture = gesture
+    self.train_model = train_model
+    self.skinkernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    self.x1 = 380
+    self.y1 = 60
+    self.x2 = 640
+    self.y2 = 350
+    # solution APIs
+    self.mp_drawing = mp.solutions.drawing_utils
+    self.mp_drawing_styles = mp.solutions.drawing_styles
+    self.mp_hands = mp.solutions.hands
+
+  def delete_file(self,path):
+      # 列出文件夹中的所有文件名
+      file_names = os.listdir(path)
+
+      # 判断文件夹是否有文件
+      if len(file_names) > 0:
+          # 删除已有文件
+          for file_name in file_names:
+              file_path = os.path.join(path, file_name)
+              os.remove(file_path)
+          print(f"已删除{len(file_names)}个文件。")
+
+  def save_to_csv(self,data_list, filename):
+      # 将数据写入 CSV 文件
+      with open(filename, 'a', newline='') as csvfile:
+          csv_writer = csv.writer(csvfile)
+          csv_writer.writerow(data_list)
+
+  def calculate_angle(self,x1, y1, x2, y2, x3, y3):
+      # 计算向量 V1 和向量 V2
+      v1 = (x1 - x2, y1 - y2)
+      v2 = (x3 - x2, y3 - y2)
+
+      # 计算向量 V1 和向量 V2 的模长
+      v1_length = math.sqrt(v1[0] ** 2 + v1[1] ** 2)
+      v2_length = math.sqrt(v2[0] ** 2 + v2[1] ** 2)
+
+      # 检查模长是否为零
+      if v1_length == 0 or v2_length == 0:
+          # 在此处根据需要返回默认值或错误提示
+          return 0
+
+      # 计算向量 V1 和向量 V2 的点积
+      dot_product = v1[0] * v2[0] + v1[1] * v2[1]
+
+      # 计算夹角（弧度）
+      angle_radians = math.acos(max(-1, min(1, dot_product / (v1_length * v2_length))))
+      # 转换为度数
+      angle_degrees = math.degrees(angle_radians)
+
+      return angle_degrees
+
+  def cal_angle(self,count,lmList,ges):
+       # 拇指指尖3个点的角度
+      x2, y2 = lmList[1][1], lmList[1][2]
+      x3, y3 = lmList[2][1], lmList[2][2]
+      x4, y4 = lmList[3][1], lmList[3][2]
+      angle_1 = self.calculate_angle(x2, y2, x3, y3, x4, y4)
+      # 食指指尖3个点的角度
+      x6, y6 = lmList[5][1], lmList[5][2]
+      x7, y7 = lmList[6][1], lmList[6][2]
+      x8, y8 = lmList[7][1], lmList[7][2]
+      angle_2 = self.calculate_angle(x6, y6, x7, y7, x8, y8)
+      # 中指指尖3个点的角度
+      x10, y10 = lmList[9][1], lmList[9][2]
+      x11, y11 = lmList[10][1], lmList[10][2]
+      x12, y12 = lmList[11][1], lmList[11][2]
+      angle_3 = self.calculate_angle(x10, y10, x11, y11, x12, y12)
+      # 无名指指尖3个点的角度
+      x14, y14 = lmList[13][1], lmList[13][2]
+      x15, y15 = lmList[14][1], lmList[14][2]
+      x16, y16 = lmList[15][1], lmList[15][2]
+      angle_4 = self.calculate_angle(x14, y14, x15, y15, x16, y16)
+      # 小指指尖3个点的角度
+      x18, y18 = lmList[17][1], lmList[17][2]
+      x19, y19 = lmList[18][1], lmList[18][2]
+      x20, y20 = lmList[19][1], lmList[19][2]
+      angle_5 = self.calculate_angle(x18, y18, x19, y19, x20, y20)
+      angle_list = [count,angle_1, angle_2, angle_3, angle_4, angle_5, ges]
+      return angle_list
+
+  def collect_gesture(self, capture, ges, photo_num):
+      print("启动手部关键点识别……")
+      photo_num = photo_num
+      record = False
+      predict = False
+      count = 0
+      # Webcam Setup
+      wCam, hCam = 640, 480
+      cam = cv2.VideoCapture(0)
+      cam.set(3,wCam)
+      cam.set(4,hCam)
+
+      print("按d删除已有手势样本数据")
+      print("按c开始录制手势样本数据")
+      print("按t开始训练模型")
+      print("按p开始识别手势")
+      print("按esc退出程序")
+
+      # Mediapipe Hand Landmark Model
+      with self.mp_hands.Hands(
+          model_complexity=0,
+          min_detection_confidence=0.5,
+          min_tracking_confidence=0.5) as hands:
+
+        while cam.isOpened():
+          success, image = cam.read()
+          image = cv2.flip(image,1)
+          image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+          results = hands.process(image)
+          image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+          if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+              self.mp_drawing.draw_landmarks(
+                  image,
+                  hand_landmarks,
+                  self.mp_hands.HAND_CONNECTIONS,
+                  self.mp_drawing_styles.get_default_hand_landmarks_style(),
+                  self.mp_drawing_styles.get_default_hand_connections_style()
+                  )
+
+          # multi_hand_landmarks method for Finding postion of Hand landmarks,识别手部地标的位置
+          lmList = []
+          if results.multi_hand_landmarks:
+            myHand = results.multi_hand_landmarks[0]
+            for id, lm in enumerate(myHand.landmark):
+              h, w, c = image.shape
+              cx, cy = int(lm.x * w), int(lm.y * h)
+              lmList.append([id, cx, cy])
+            # print(lmList)
+
+          cv2.imshow('handDetector', image)
+          Ges = image
+          if record is True and count < photo_num:
+              if len(lmList) != 0:
+                  print("开始录制手势样本数据，请把手放到摄像头前，调整手位置，直到屏幕中出现点线")
+                  # 录制训练集
+                  '''
+                  imencode(): 这是 OpenCV 中用于图像编码的函数。它将图像数据编码为指定格式的图像文件，并返回编码后的图像数据。
+                      '.jpg': 这是指定的图像编码格式，即 JPG 格式。  
+                      Ges: 这是要编码的图像数据，通常是一个 NumPy 数组或类似的数据结构，表示图像。
+                      [1]: 这是 cv2.imencode() 函数的返回值，用于获取编码后的图像数据。
+                      .tofile(): 这是 Python 的文件写入方法，用于将数据写入文件中。
+                      self.train_path: 这可能是一个存储训练数据文件的路径，即图像将保存在这个路径下。
+                      '{}_{}.jpg'.format(str(random.randrange(1000, 100000)),str(ges)): 这是文件名的格式化字符串。它使用了 Python 的字符串格式化功能，
+                          其中 {} 表示一个占位符，将会被后续提供的值替换。str(random.randrange(1000, 100000)) 用于生成一个 1000 到 99999 之间的随机整数，并将其转换为字符串；
+                      str(ges) 将 ges 变量转换为字符串。
+                  通过这行代码，图像 Ges 将被编码为 JPG 格式，并且编码后的图像数据将被写入到文件中。文件名将是一个随机生成的整数加上手势类型的组合，文件将保存在 self.train_path 指定的路径下。'''
+                  count += 1
+                  id = '{}_{}_{}'.format(str(random.randrange(1000, 100000)),count, str(ges))
+                  cv2.imencode('.jpg', Ges)[1].tofile(self.train_path + id +'.jpg')
+                  angle_list = self.cal_angle(id,lmList,ges)
+                  print(f"样本:{count}，夹角：{angle_list}")
+                  filename= self.train_path+'train_data.csv'
+                  self.save_to_csv(angle_list,filename)
+          elif count == photo_num:
+              print('{}张训练集手势录制完毕，3秒后录制此手势测试集，共{}张'.format(photo_num, int(photo_num * 0.43)))
+              time.sleep(3)
+              count += 1
+          elif record is True and photo_num < count < int(photo_num * 1.43):
+              if len(lmList) != 0:
+                  id = '{}_{}_{}'.format(str(random.randrange(1000, 100000)),count, str(ges))
+                  cv2.imencode('.jpg', Ges)[1].tofile(self.predict_path + id +'.jpg')
+                  angle_list = self.cal_angle(id,lmList,ges)
+                  print(f"样本:{count}，夹角：{angle_list}")
+                  filename= self.predict_path+'predict_data.csv'
+                  self.save_to_csv(angle_list,filename)
+                  count += 1
+          elif record is True and count >= int(photo_num * 1.43):
+              record = False
+              ges += 1
+              if ges < len(self.gesture):
+                  print('此手势录制完成，按c录制下一个手势')
+              else:
+                  print('手势录制结束, 按t进行训练')
+
+          elif predict is True:
+              # 第二个手势的数据采集
+              if len(lmList) != 0:
+                  x_test1 = [self.cal_angle(id, lmList, ges)[1:6]]
+
+                  #第二手势
+                  lmList2 = []
+                  if results.multi_hand_landmarks is not None and len(results.multi_hand_landmarks) > 1:
+                      myHand2 = results.multi_hand_landmarks[1]
+                      # print(f"results.multi_hand_landmarks[1]:{results.multi_hand_landmarks[1]}")
+                      for id, lm in enumerate(myHand2.landmark):
+                          h, w, c = image.shape
+                          cx, cy = int(lm.x * w), int(lm.y * h)
+                          lmList2.append([id, cx, cy])
+                      x_test2 = [self.cal_angle(id, lmList2, ges)[1:6]]
+                      x_test = x_test1 + x_test2
+                  else:
+                      x_test = x_test1
+                  print(x_test)
+                  x_test = pd.DataFrame(x_test, columns=['angle_1', 'angle_2', 'angle_3', 'angle_4', 'angle_5'])
+                  # print('x_test')
+                  print(x_test)
+                  y_pred = self.train_model.predict(x_test)
+                  print(f"y_pred:{y_pred}")
+
+                  # 要在屏幕中显示中文，需要使用PIL方法，不能使用putText方法
+                  # 将 OpenCV 图像转换为 PIL 图像
+                  pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+                  # 创建绘图对象
+                  draw = ImageDraw.Draw(pil_image)
+                  # 加载自定义 TrueType 字体，用于显示中文
+                  fontsize = 50
+                  font = ImageFont.truetype("font/simsun.ttc", fontsize, encoding="utf-8")
+
+                  # 绘制预测结果的中文文本
+                  for i, y_pred_sub in enumerate(y_pred):
+                      if y_pred_sub == 0:
+                          gesture = '剪刀'
+                      elif y_pred_sub == 1:
+                          gesture = '石头'
+                      elif y_pred_sub == 2:
+                          gesture = '布'
+
+                      # 要显示的文本和位置
+                      if i == 0 :
+                          x, y = lmList[12][1], lmList[12][2]
+                      else :
+                          x, y = lmList2[12][1], lmList2[12][2]
+                      # 在图像上绘制文本
+                      draw.text((x, y), gesture, font=font, fill=(0, 0, 255))
+
+                  # 将绘制好的 PIL 图像转换为 OpenCV 图像格式
+                  image_with_text = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
+                  cv2.imshow('handDetector', image_with_text)
+
+              '''cv2.waitKey(10): 这是 OpenCV 中的等待键盘输入的函数。它会等待一个指定的时间（这里是 10 毫秒），看用户是否有按键输入。如果用户在指定的时间内按下了键，函数将返回按键的 ASCII 码值；如果用户没有按下键，函数将返回 -1。
+              27 对应 ASCII 码值是 ESC 键。因此，这个条件判断用于检查用户是否按下了 ESC 键。'''
+          k = cv2.waitKey(10)
+          if k == 27:
+              break
+
+          elif k == ord('c'):  # 录制手势
+              record = True
+              count = 0
+
+          elif k == ord('t'):  # 训练模型
+              # 读取 CSV 文件
+              data = pd.read_csv('Gesture_train/train_data.csv')
+              # 分离特征值 (X) 和类别 (y)
+              X = data[['angle_1', 'angle_2', 'angle_3', 'angle_4', 'angle_5']]
+              y = data['ges']
+              # 创建 模型
+              self.train_model = RandomForestClassifier()
+              # 训练模型
+              self.train_model.fit(X, y)
+              print("模型训练结束。")
+
+          elif k == ord('p'):  # 预测手势
+              print("进行手势识别……")
+              predict = True
+
+
+          elif k == ord('d'):  # 删除已有手势样本数据
+              # 删除已有文件
+              self.delete_file(train_path)
+              self.delete_file(pridect_path)
+
+              angle_list_str = ['id', 'angle_1', 'angle_2', 'angle_3', 'angle_4', 'angle_5', 'ges']
+              self.save_to_csv(angle_list_str, 'Gesture_train/train_data.csv')
+              self.save_to_csv(angle_list_str, 'Gesture_predict/predict_data.csv')
+
+      # cam.release()
+
+
+
+if __name__ == '__main__':
+
+    Gesturetype = ['剪刀', '石头', '布']
+    train_path = 'Gesture_train/'
+    pridect_path = 'Gesture_predict/'
+
+    for path in [train_path, pridect_path]:
+        if not os.path.exists(path):
+            os.mkdir(path)
+    print(f'训练手势有：{Gesturetype}')
+
+    train_model = 'Gesture.h5'
+    # 初始化手势识别类
+    Ges = Gesture(train_path, pridect_path, Gesturetype, train_model)
+    # 单个手势要录制的数量
+    num = 500
+    # 训练手势类别计数器
+    x = 0
+    # 调用启动函数
+    Ges.collect_gesture(capture=0, ges=x, photo_num=num)
